@@ -9,6 +9,7 @@ pub enum Pomodoro {
 }
 
 impl Pomodoro {
+	#[must_use]
 	pub fn tick(self, break_interval: u32) -> Self {
 		match self {
 			Pomodoro::Work(0) => Pomodoro::LongBreak,
@@ -42,5 +43,5 @@ fn pomodoro_works_ok() {
 			Work(3),
 			Break(2)
 		]
-	)
+	);
 }

@@ -1,7 +1,7 @@
 use chrono::{DateTime, Utc};
 use itertools::Itertools;
 use rand::prelude::*;
-use serde::{de::DeserializeOwned, Deserialize, Serialize};
+use serde::{Deserialize, Serialize};
 use std::{
 	collections::{BTreeMap, HashMap, HashSet},
 	hash::Hash,
@@ -22,10 +22,10 @@ pub trait Task: Hash + Eq {
 
 	fn estimated_length(&self) -> Duration;
 
-	fn divided_into(&self, duration: Duration) -> u32 {
+	fn divided_into(&self, duration: Duration) -> u64 {
 		self.estimated_length()
 			.as_secs()
-			.div_ceil(duration.as_secs()) as u32
+			.div_ceil(duration.as_secs())
 	}
 }
 
@@ -45,6 +45,7 @@ impl<T: Task> Schedule<T> {
 		}
 	}
 
+	#[must_use]
 	pub fn unsatisfied_tasks(&self) -> HashSet<Arc<T>> {
 		self.tasks
 			.iter()
@@ -54,7 +55,7 @@ impl<T: Task> Schedule<T> {
 					self.slots
 						.values()
 						.filter(|v| v.as_deref() == Some(t))
-						.count() as u32,
+						.count() as u64,
 				)
 			})
 			.filter(|&(t, amt)| amt < t.divided_into(self.timeslice_length))
@@ -66,11 +67,12 @@ impl<T: Task> Schedule<T> {
 		self.slots.retain(|t, _| t > &before);
 	}
 
+	#[allow(clippy::missing_panics_doc)]
 	pub fn schedule(&mut self) -> HashSet<Arc<T>> {
 		self.slots.iter_mut().for_each(|(_, t)| *t = None);
 		let mut unsatisfied = HashSet::new();
 
-		let mut remaining: HashMap<&T, u32> = self
+		let mut remaining: HashMap<&T, u64> = self
 			.tasks
 			.iter()
 			.map(|t| (&**t, t.divided_into(self.timeslice_length)))
@@ -81,7 +83,7 @@ impl<T: Task> Schedule<T> {
 						self.slots
 							.values()
 							.filter(|v| v.as_deref() == Some(t))
-							.count() as u32,
+							.count() as u64,
 					),
 				)
 			})
@@ -212,17 +214,17 @@ mod tests {
 	use super::{Schedule, Task};
 	use chrono::{DateTime, TimeZone, Utc};
 	use serde::{Deserialize, Serialize};
-	use std::{ops::Range, time::Duration};
+	use std::{collections::BTreeMap, ops::Range, time::Duration};
 
 	#[derive(Debug, PartialEq, Eq, Serialize, Deserialize, Hash)]
 	pub struct ExplicitTask {
-		pub priority: i32,
+		pub priority: i64,
 		pub work_period: Range<DateTime<Utc>>,
 		pub length: Duration,
 	}
 
 	impl Task for ExplicitTask {
-		type Priority = i32;
+		type Priority = i64;
 
 		fn priority(&self) -> Self::Priority {
 			self.priority
@@ -245,7 +247,7 @@ mod tests {
 		let tasks = (1..9)
 			.map(|i| {
 				ExplicitTask {
-					priority: i as i32,
+					priority: i64::from(i),
 					work_period: (start + (hour * i))..(start + (hour * i * 3)),
 					length: Duration::from_secs(30 * 60),
 				}
@@ -254,7 +256,7 @@ mod tests {
 			.collect();
 		let mut schedule = Schedule {
 			tasks,
-			slots: Default::default(),
+			slots: BTreeMap::default(),
 			timeslice_length: Duration::from_secs(25 * 60),
 		};
 		schedule.layout_slots(&(start..end), Duration::from_secs(30 * 60));
@@ -282,7 +284,7 @@ mod tests {
 			.collect();
 		let mut schedule = Schedule {
 			tasks: tasks.iter().cloned().collect(),
-			slots: Default::default(),
+			slots: BTreeMap::default(),
 			timeslice_length: Duration::from_secs(25 * 60),
 		};
 		schedule.layout_slots(&(start..end), Duration::from_secs(30 * 60));
@@ -317,7 +319,7 @@ mod tests {
 
 		let mut schedule = Schedule {
 			tasks: tasks.iter().cloned().collect(),
-			slots: Default::default(),
+			slots: BTreeMap::default(),
 			timeslice_length: Duration::from_secs(25 * 60),
 		};
 		schedule.layout_slots(&(start..end), Duration::from_secs(30 * 60));

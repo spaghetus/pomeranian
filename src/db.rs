@@ -1,10 +1,11 @@
-use chrono::{DateTime, Days, Local, NaiveDateTime, NaiveTime, TimeZone, Utc};
+use chrono::{DateTime, Days, Local, NaiveTime, Utc};
 use pomeranian::{
 	pomodoro::Pomodoro,
 	scheduler::{Schedule, Task},
 };
 use serde::{Deserialize, Serialize};
 use std::{
+	collections::{BTreeMap, HashSet},
 	ops::{Deref, Range},
 	sync::Arc,
 	time::{Duration, Instant},
@@ -24,8 +25,8 @@ impl Default for Db {
 	fn default() -> Self {
 		Self {
 			schedule: Schedule {
-				tasks: Default::default(),
-				slots: Default::default(),
+				tasks: HashSet::default(),
+				slots: BTreeMap::default(),
 				timeslice_length: Duration::from_secs(25 * 60),
 			},
 			active_period: NaiveTime::from_hms_opt(9, 0, 0).unwrap()

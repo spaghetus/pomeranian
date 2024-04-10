@@ -1,8 +1,6 @@
 use clap::Parser;
-use pomeranian::pomodoro::Pomodoro;
 use rustbreak::{deser::Ron, PathDatabase};
-use serde::{Deserialize, Serialize};
-use std::{path::PathBuf, sync::Arc};
+use std::path::PathBuf;
 
 #[derive(Parser)]
 struct Args {

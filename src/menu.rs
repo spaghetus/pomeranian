@@ -1,6 +1,6 @@
 use std::{ops::Div, time::Duration};
 
-use chrono::{Local, TimeZone, Utc};
+use chrono::{Local, Utc};
 use pomeranian::scheduler::Schedule;
 
 use crate::db::{CTask, Db};
@@ -80,7 +80,7 @@ pub fn remove(db: &mut Db) {
 		.interact_opt()
 		.unwrap()
 	{
-		db.remove_task(&tasks[index])
+		db.remove_task(&tasks[index]);
 	}
 }
 
@@ -152,6 +152,7 @@ pub fn edit(db: &mut Db) {
 	}
 }
 
+#[allow(clippy::cast_precision_loss)]
 pub fn shuffle(db: &mut Db) {
 	fn small_victories(sched: &Schedule<CTask>) -> f64 {
 		let ttc = sched
@@ -185,7 +186,7 @@ pub fn shuffle(db: &mut Db) {
 	fn explosive(sched: &Schedule<CTask>) -> f64 {
 		let mut lengths = vec![];
 		let mut in_combo = false;
-		for slot in sched.slots.values().map(|s| s.is_some()) {
+		for slot in sched.slots.values().map(Option::is_some) {
 			match (slot, in_combo) {
 				(false, true) => {
 					*lengths.last_mut().unwrap() += 1;
@@ -198,7 +199,7 @@ pub fn shuffle(db: &mut Db) {
 			}
 		}
 
-		(lengths.iter().copied().sum::<u32>() as f64) / (lengths.len() as f64)
+		f64::from(lengths.iter().copied().sum::<u32>()) / (lengths.len() as f64)
 	}
 
 	fn hyperfocus(sched: &Schedule<CTask>) -> f64 {
@@ -219,7 +220,7 @@ pub fn shuffle(db: &mut Db) {
 			}
 		}
 
-		(combos.iter().copied().sum::<u32>() as f64) / (combos.len() as f64)
+		f64::from(combos.iter().copied().sum::<u32>()) / (combos.len() as f64)
 	}
 
 	let goal: &dyn Fn(&Schedule<CTask>) -> f64 = match dialoguer::FuzzySelect::new()
@@ -255,4 +256,6 @@ pub fn shuffle(db: &mut Db) {
 	eprintln!("Scored {score} after trying {iterations} times");
 }
 
-pub fn timer(db: &mut Db) {}
+pub fn timer(_db: &mut Db) {
+	todo!()
+}

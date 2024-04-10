@@ -248,11 +248,11 @@ pub fn shuffle(db: &mut Db) {
 		_ => todo!(),
 	};
 	eprintln!("Just a second...");
-	let score = db.shuffle_maximizing(goal, Duration::from_secs_f32(0.5));
+	let (score, iterations) = db.shuffle_maximizing(goal, Duration::from_secs_f32(0.5));
 
 	view(db);
 
-	eprintln!("Scored {score}");
+	eprintln!("Scored {score} after trying {iterations} times");
 }
 
 pub fn timer(db: &mut Db) {}

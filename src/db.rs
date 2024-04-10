@@ -106,9 +106,10 @@ impl Db {
 		&mut self,
 		goal: impl Fn(&Schedule<CTask>) -> f64,
 		time_limit: Duration,
-	) -> f64 {
+	) -> (f64, usize) {
 		let started_at = Instant::now();
 		let mut score_to_beat = goal(&self.schedule);
+		let mut iterations = 0;
 
 		while started_at.elapsed() < time_limit {
 			let mut copy = self.schedule.clone();
@@ -118,9 +119,10 @@ impl Db {
 				self.schedule = copy;
 				score_to_beat = score;
 			}
+			iterations += 1;
 		}
 
-		score_to_beat
+		(score_to_beat, iterations)
 	}
 }
 

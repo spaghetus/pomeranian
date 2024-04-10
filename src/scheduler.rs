@@ -10,23 +10,28 @@ use std::{
 	time::Duration,
 };
 
+// (Traits are like interfaces in object-orientation-land, they allow polymorphism by composition instead of polymorphism by inheritance)
+/// A task which the scheduler is able to organize
 pub trait Task: Hash + Eq {
-	type Priority: Clone + Copy + Ord;
+	/// Priority needs to have total ordering, but otherwise we don't really care what it is.
+	type Priority: Ord;
 
 	fn priority(&self) -> Self::Priority;
 
 	fn working_period(&self) -> Range<DateTime<Utc>>;
 
 	fn estimated_length(&self) -> Duration;
+
+	fn divided_into(&self, duration: Duration) -> u32 {
+		self.estimated_length()
+			.as_secs()
+			.div_ceil(duration.as_secs()) as u32
+	}
 }
 
-#[derive(Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, PartialEq, Eq, Serialize, Deserialize, Default, Clone)]
 pub struct Schedule<T: Task> {
-	#[serde(bound(
-		serialize = "Arc<T>: Serialize",
-		deserialize = "Arc<T>: DeserializeOwned"
-	))]
-	pub tasks: Vec<Arc<T>>,
+	pub tasks: HashSet<Arc<T>>,
 	pub slots: BTreeMap<DateTime<Utc>, Option<Arc<T>>>,
 	pub timeslice_length: Duration,
 }
@@ -39,8 +44,26 @@ impl<T: Task> Schedule<T> {
 			cursor += interval;
 		}
 	}
-	pub fn length_in_timeslices(&self, duration: Duration) -> u32 {
-		duration.as_secs().div_ceil(self.timeslice_length.as_secs()) as u32
+
+	pub fn unsatisfied_tasks(&self) -> HashSet<Arc<T>> {
+		self.tasks
+			.iter()
+			.map(|t| {
+				(
+					t,
+					self.slots
+						.values()
+						.filter(|v| v.as_deref() == Some(t))
+						.count() as u32,
+				)
+			})
+			.filter(|&(t, amt)| amt < t.divided_into(self.timeslice_length))
+			.map(|(t, _amt)| t.clone())
+			.collect()
+	}
+
+	pub fn remove_old_slots(&mut self, before: DateTime<Utc>) {
+		self.slots.retain(|t, _| t > &before);
 	}
 
 	pub fn schedule(&mut self) -> HashSet<Arc<T>> {
@@ -50,7 +73,18 @@ impl<T: Task> Schedule<T> {
 		let mut remaining: HashMap<&T, u32> = self
 			.tasks
 			.iter()
-			.map(|t| (&**t, self.length_in_timeslices(t.estimated_length())))
+			.map(|t| (&**t, t.divided_into(self.timeslice_length)))
+			.map(|(t, n)| {
+				(
+					t,
+					n.saturating_sub(
+						self.slots
+							.values()
+							.filter(|v| v.as_deref() == Some(t))
+							.count() as u32,
+					),
+				)
+			})
 			.collect();
 
 		// Lay out task in ascending period-length order, to prevent larger tasks from starving shorter ones
@@ -138,7 +172,7 @@ impl<T: Task> Schedule<T> {
 					slots
 						.take_while(|(time, _)| l_wp.contains(time))
 						// Only take references to slots that are also willing to be here
-						.filter(|(_, task)| wp_of(task.as_ref()).contains(l_time))
+						.filter(|(_, task)| task.is_none() || wp_of(task.as_ref()).contains(l_time))
 						.map(|(_, t)| t),
 				)
 				.collect();
@@ -247,7 +281,7 @@ mod tests {
 			})
 			.collect();
 		let mut schedule = Schedule {
-			tasks: tasks.clone(),
+			tasks: tasks.iter().cloned().collect(),
 			slots: Default::default(),
 			timeslice_length: Duration::from_secs(25 * 60),
 		};
@@ -266,7 +300,7 @@ mod tests {
 		let end = Utc.with_ymd_and_hms(2024, 3, 31, 0, 0, 0).unwrap();
 		let hour = Duration::from_secs(60 * 60);
 
-		let tasks = vec![
+		let tasks = [
 			ExplicitTask {
 				priority: 1,
 				work_period: (start + (hour * 4))..(start + (hour * 6)),
@@ -282,7 +316,7 @@ mod tests {
 		];
 
 		let mut schedule = Schedule {
-			tasks,
+			tasks: tasks.iter().cloned().collect(),
 			slots: Default::default(),
 			timeslice_length: Duration::from_secs(25 * 60),
 		};

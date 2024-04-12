@@ -24,7 +24,7 @@ impl Pomodoro {
 		match self {
 			Pomodoro::LongBreak => Pomodoro::Work(0),
 			Pomodoro::Break(n) => Pomodoro::Work(n + 1),
-			Pomodoro::Work(n) if n == break_interval - 1 => Pomodoro::LongBreak,
+			Pomodoro::Work(n) if n >= break_interval - 1 => Pomodoro::LongBreak,
 			Pomodoro::Work(n) => Pomodoro::Break(n),
 		}
 	}
@@ -59,4 +59,28 @@ fn pomodoro_works_ok() {
 		history.push(timer);
 	}
 	assert_eq!(&history[..], &reference[1..]);
+}
+
+#[test]
+fn pomodoro_is_reversible() {
+	use rand::{thread_rng, Rng};
+	let mut rng = thread_rng();
+	for _ in 0..128 {
+		let break_interval = rng.gen_range(2..64);
+		let mut pomodoro = match rng.gen_range(0..3) {
+			0 => Pomodoro::LongBreak,
+			1 => Pomodoro::Break(rng.gen_range(0..(break_interval - 1))),
+			2 => Pomodoro::Work(rng.gen_range(0..(break_interval - 1))),
+			_ => unreachable!(),
+		};
+		let initial = pomodoro;
+		let amt = rng.gen_range(0..256);
+		for _ in 0..amt {
+			pomodoro = pomodoro.tick(break_interval);
+		}
+		for _ in 0..amt {
+			pomodoro = pomodoro.untick(break_interval);
+		}
+		assert_eq!(initial, pomodoro, "{break_interval}");
+	}
 }

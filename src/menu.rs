@@ -1,9 +1,9 @@
-use std::{ops::Div, time::Duration};
-
+use crate::db::{CTask, Db};
 use chrono::{Local, Utc};
 use pomeranian::scheduler::Schedule;
+use std::{ops::Div, time::Duration};
 
-use crate::db::{CTask, Db};
+mod pomodoro;
 
 pub fn view(db: &Db) {
 	eprintln!("Begin plan listing...");
@@ -256,6 +256,6 @@ pub fn shuffle(db: &mut Db) {
 	eprintln!("Scored {score} after trying {iterations} times");
 }
 
-pub fn timer(_db: &mut Db) {
-	todo!()
+pub fn timer(db: &mut Db) {
+	pomodoro::timer(db);
 }

@@ -5,6 +5,7 @@ use crossterm::{
 	execute,
 	terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
 };
+use notify_rust::Notification;
 use pomeranian::pomodoro::Pomodoro;
 use ratatui::{
 	backend::CrosstermBackend,
@@ -61,7 +62,15 @@ fn timer_inner(db: &mut Db) -> std::io::Result<()> {
 				continue;
 			}
 		};
-		// Wait until
+		if let Some(task) = &task {
+			if let Err(e) = Notification::new()
+				.summary(&format!("Start working on {}", task.name))
+				.show()
+			{
+				eprintln!("Error showing notification {e}");
+			}
+		}
+		// Loop until we're done with this task
 		while keep_going && time.end > Utc::now() {
 			let now = Utc::now();
 			// Draw terminal
@@ -106,6 +115,12 @@ fn timer_inner(db: &mut Db) -> std::io::Result<()> {
 		}
 		// Done with the section
 		if let Some(task) = task {
+			if let Err(e) = Notification::new()
+				.summary(&format!("Done working on {}", task.name))
+				.show()
+			{
+				eprintln!("Error showing notification {e}");
+			}
 			// Add the time we spent on the task
 			let elapsed = Utc::now() - entered_task_at;
 			*time_spent.entry(task).or_default() += elapsed.to_std().unwrap();

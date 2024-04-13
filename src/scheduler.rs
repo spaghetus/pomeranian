@@ -64,28 +64,24 @@ impl<T: Task> Schedule<T> {
 	}
 
 	pub fn remove_old_slots(&mut self, before: DateTime<Utc>) {
-		self.slots.retain(|t, _| t > &before);
+		self.slots.retain(|t, _| t >= &before);
 	}
 
 	#[allow(clippy::missing_panics_doc)]
 	pub fn schedule(&mut self) -> HashSet<Arc<T>> {
-		self.slots.iter_mut().for_each(|(_, t)| *t = None);
 		let mut unsatisfied = HashSet::new();
 
-		let mut remaining: HashMap<&T, u64> = self
+		let mut remaining: HashMap<&Arc<T>, u64> = self
 			.tasks
 			.iter()
-			.map(|t| (&**t, t.divided_into(self.timeslice_length)))
+			.map(|t| (t, t.divided_into(self.timeslice_length)))
 			.map(|(t, n)| {
-				(
-					t,
-					n.saturating_sub(
-						self.slots
-							.values()
-							.filter(|v| v.as_deref() == Some(t))
-							.count() as u64,
-					),
-				)
+				let found = self
+					.slots
+					.values()
+					.filter(|v| v.as_ref().map(|v| v == t).unwrap_or(false))
+					.count() as u64;
+				(t, n.saturating_sub(found))
 			})
 			.collect();
 
@@ -94,19 +90,21 @@ impl<T: Task> Schedule<T> {
 			let wp = t.working_period();
 			wp.end - wp.start
 		}) {
-			let remaining = remaining.get_mut(&**task).unwrap();
+			let remaining = remaining.get_mut(task).unwrap();
 			for (_, slot) in self
 				.slots
 				.range_mut(task.working_period())
 				.filter(|(_, slot)| slot.is_none())
 			{
-				*remaining -= 1;
-				*slot = Some(task.clone());
 				if *remaining == 0 {
 					continue 'task;
 				}
+				*remaining -= 1;
+				*slot = Some(task.clone());
 			}
-			unsatisfied.insert(task.clone());
+			if *remaining > 0 {
+				unsatisfied.insert(task.clone());
+			}
 		}
 
 		// The Timeslice Hunger Games
@@ -129,9 +127,9 @@ impl<T: Task> Schedule<T> {
 					.collect();
 				for (slot, candidate_task) in candidates {
 					continuing = true;
-					*remaining.get_mut(&*candidate_task).unwrap() += 1;
+					*remaining.get_mut(&candidate_task).unwrap() += 1;
 					unsatisfied.insert(candidate_task.clone());
-					let rem = remaining.get_mut(&*task).unwrap();
+					let rem = remaining.get_mut(&task).unwrap();
 					*rem -= 1;
 					if *rem == 0 {
 						unsatisfied.remove(&*task);

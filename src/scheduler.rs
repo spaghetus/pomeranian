@@ -64,7 +64,8 @@ impl<T: Task> Schedule<T> {
 	}
 
 	pub fn remove_old_slots(&mut self, before: DateTime<Utc>) {
-		self.slots.retain(|t, _| t >= &before);
+		self.slots
+			.retain(|t, _| (*t + self.timeslice_length) >= before);
 	}
 
 	#[allow(clippy::missing_panics_doc)]

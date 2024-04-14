@@ -1,5 +1,4 @@
 use clap::Parser;
-use pomeranian::pomodoro::Pomodoro;
 use rustbreak::{deser::Ron, PathDatabase};
 use std::path::PathBuf;
 
@@ -43,7 +42,6 @@ fn main() {
 				let mut db = db.borrow_data_mut().unwrap();
 				db.schedule.slots.clear();
 				db.pomodoro_states.clear();
-				db.pomodoro = Pomodoro::Work(db.break_interval - 1);
 				for task in db.schedule.tasks.clone() {
 					db.create_slots_up_to(task.working_period.end);
 				}

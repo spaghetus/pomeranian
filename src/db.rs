@@ -18,7 +18,6 @@ pub(crate) struct Db {
 	pub break_interval: u32,
 	pub short_break: Duration,
 	pub long_break: Duration,
-	pub pomodoro: Pomodoro,
 	pub pomodoro_states: Vec<(Range<DateTime<Utc>>, Pomodoro)>,
 }
 
@@ -35,7 +34,7 @@ impl Default for Db {
 			break_interval: 4,
 			short_break: Duration::from_secs(5 * 60),
 			long_break: Duration::from_secs(30 * 60),
-			pomodoro: Pomodoro::Work(3),
+			// pomodoro: Pomodoro::LongBreak,
 			pomodoro_states: vec![],
 		}
 	}
@@ -66,23 +65,26 @@ impl Db {
 	}
 	pub fn create_slots_up_to(&mut self, time: DateTime<Utc>) {
 		let mut cursor = self
-			.schedule
-			.slots
-			.keys()
-			.max()
-			.copied()
+			.pomodoro_states
+			.last()
+			.map(|(r, _)| r.end)
 			.unwrap_or_default()
 			.max(Utc::now());
+		let mut pomodoro = self
+			.pomodoro_states
+			.last()
+			.map(|(_, s)| *s)
+			.unwrap_or_default();
 		while cursor < time {
-			self.pomodoro = self.pomodoro.tick(self.break_interval);
-			let len = match self.pomodoro {
+			pomodoro = pomodoro.tick(self.break_interval);
+			let len = match pomodoro {
 				Pomodoro::Work(_) => self.schedule.timeslice_length,
 				Pomodoro::Break(_) => self.short_break,
 				Pomodoro::LongBreak => self.long_break,
 			};
 			self.pomodoro_states
-				.push((cursor..(cursor + len), self.pomodoro));
-			match self.pomodoro {
+				.push((cursor..(cursor + len), pomodoro));
+			match pomodoro {
 				Pomodoro::Work(_) => {
 					self.schedule.slots.insert(cursor, None);
 					cursor += self.schedule.timeslice_length;
@@ -100,7 +102,7 @@ impl Db {
 					.with_time(self.active_period.start)
 					.unwrap();
 				cursor = local_cursor.with_timezone(&Utc);
-				self.pomodoro = Pomodoro::LongBreak;
+				pomodoro = Pomodoro::LongBreak;
 			}
 		}
 	}

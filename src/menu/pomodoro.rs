@@ -1,5 +1,6 @@
 use crate::db::{CTask, Db};
 use chrono::{Local, Utc};
+use color::{color_space::Srgb, Deg, Hsv, Rgb, ToRgb};
 use crossterm::{
 	event::{DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyEvent},
 	execute,
@@ -9,7 +10,8 @@ use notify_rust::Notification;
 use pomeranian::pomodoro::Pomodoro;
 use ratatui::{
 	backend::CrosstermBackend,
-	layout::{Constraint, Direction, Layout},
+	layout::{Constraint, Direction, Layout, Rect},
+	style::{Color, Stylize},
 	widgets::{Block, Borders, Gauge, Paragraph},
 	Terminal,
 };
@@ -124,6 +126,26 @@ fn timer_inner(db: &mut Db) -> std::io::Result<()> {
 			// Add the time we spent on the task
 			let elapsed = Utc::now() - entered_task_at;
 			*time_spent.entry(task).or_default() += elapsed.to_std().unwrap();
+		}
+		for offset in 0..=20 {
+			let offset = offset as f64 / 40.0;
+			terminal.draw(|frame| {
+				for x in 0..frame.size().width {
+					let hue = (((x as f64) / frame.size().width as f64) + offset) * 360.0;
+					let hsv = Hsv::<f64, Srgb>::new(Deg(hue), 1.0, 1.0);
+					let rgb: Rgb<f64> = hsv.to_rgb();
+					let color = Color::Rgb(
+						(rgb.r * u8::MAX as f64) as u8,
+						(rgb.g * u8::MAX as f64) as u8,
+						(rgb.b * u8::MAX as f64) as u8,
+					);
+					frame.render_widget(
+						Block::default().bg(color),
+						Rect::new(x, 0, 1, frame.size().height),
+					)
+				}
+			})?;
+			std::thread::sleep(Duration::from_millis(30));
 		}
 		if !keep_going {
 			break;

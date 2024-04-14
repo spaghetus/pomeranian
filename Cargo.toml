@@ -8,6 +8,7 @@ edition = "2021"
 [dependencies]
 chrono = { version = "0.4.37", features = ["serde"] }
 clap = { version = "4.5.4", features = ["derive", "env"] }
+color-rs = "0.8.0"
 crossterm = "0.27.0"
 dialoguer = { version = "0.11.0", features = ["fuzzy-select"] }
 itertools = "0.12.1"

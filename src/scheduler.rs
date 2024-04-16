@@ -1,3 +1,6 @@
+//! The scheduler for organizing tasks.
+//! This isn't great since copies of the task are stored as map keys, but it works OK
+
 use chrono::{DateTime, Utc};
 use itertools::Itertools;
 use rand::prelude::*;
@@ -16,12 +19,14 @@ pub trait Task: Hash + Eq {
 	/// Priority needs to have total ordering, but otherwise we don't really care what it is.
 	type Priority: Ord;
 
+	/// The priority of the task. Higher is more important.
 	fn priority(&self) -> Self::Priority;
 
+	/// The range of time when it is possible to work on this task.
 	fn working_period(&self) -> Range<DateTime<Utc>>;
-
+	/// The length of time this task is expected to take.
 	fn estimated_length(&self) -> Duration;
-
+	/// The number of time slices it will take to complete this task.
 	fn divided_into(&self, duration: Duration) -> u64 {
 		self.estimated_length()
 			.as_secs()
@@ -29,14 +34,20 @@ pub trait Task: Hash + Eq {
 	}
 }
 
+/// Tasks are organized first by claiming the first (length) slots in their working period, in ascending length order.
+/// Next, a truly awful algorithm that I call the timeslice hunger games lets each task take its turn to steal time from lower-priority tasks.
 #[derive(Debug, PartialEq, Eq, Serialize, Deserialize, Default, Clone)]
 pub struct Schedule<T: Task> {
+	/// The set of tasks, which even includes tasks that haven't reserved any slots.
 	pub tasks: HashSet<Arc<T>>,
+	/// Timeslots in which tasks can be scheduled.
 	pub slots: BTreeMap<DateTime<Utc>, Option<Arc<T>>>,
+	/// The length of each timeslice.
 	pub timeslice_length: Duration,
 }
 
 impl<T: Task> Schedule<T> {
+	/// Simple method for laying out slots over a period of time. Probably don't use this.
 	pub fn layout_slots(&mut self, range: &Range<DateTime<Utc>>, interval: Duration) {
 		let mut cursor = range.start;
 		while cursor < range.end {
@@ -45,6 +56,7 @@ impl<T: Task> Schedule<T> {
 		}
 	}
 
+	/// Tasks which don't have enough tasks scheduled to be finished before their due date.
 	#[must_use]
 	pub fn unsatisfied_tasks(&self) -> HashSet<Arc<T>> {
 		self.tasks
@@ -63,11 +75,13 @@ impl<T: Task> Schedule<T> {
 			.collect()
 	}
 
+	/// Remove all slots that end in the past.
 	pub fn remove_old_slots(&mut self, before: DateTime<Utc>) {
 		self.slots
 			.retain(|t, _| (*t + self.timeslice_length) >= before);
 	}
 
+	/// Try to satisfy every task.
 	#[allow(clippy::missing_panics_doc)]
 	pub fn schedule(&mut self) -> HashSet<Arc<T>> {
 		let mut unsatisfied = HashSet::new();
@@ -144,6 +158,7 @@ impl<T: Task> Schedule<T> {
 		unsatisfied
 	}
 
+	/// Shuffle tasks randomly, while still keeping every task in a slot within its working period.
 	pub fn shuffle(&mut self) {
 		/// Helper to get the working period of an optional task
 		fn wp_of<T: Task>(t: Option<&Arc<T>>) -> Range<DateTime<Utc>> {

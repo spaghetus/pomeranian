@@ -1,14 +1,23 @@
+//! Module holding the pomodoro state machine.
 use serde::{Deserialize, Serialize};
 
+/// The pomodoro state machine.
 #[derive(Serialize, Deserialize, Clone, Copy, Default, Debug, PartialEq, Eq)]
 pub enum Pomodoro {
+	/// Work(n) represents a 25-minute work period in the typical pomodoro technique.
+	/// Becomes Break(n-1), or LongBreak if n=0.
 	Work(u32),
+	/// Break(n) represents a 5-minute break period in the typical pomodoro technique.
+	/// Becomes Work(n).
 	Break(u32),
+	/// The state machine starts in LongBreak, which represents a 30-minute break in the typical pomodoro technique.
+	/// LongBreak becomes Work(n-1) where n is the break interval.
 	#[default]
 	LongBreak,
 }
 
 impl Pomodoro {
+	/// Return the next pomodoro state.
 	#[must_use]
 	pub fn tick(self, break_interval: u32) -> Self {
 		match self {
@@ -19,6 +28,7 @@ impl Pomodoro {
 		}
 	}
 
+	/// Returns the previous pomodoro state.
 	#[must_use]
 	pub fn untick(self, break_interval: u32) -> Self {
 		match self {

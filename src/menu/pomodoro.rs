@@ -1,4 +1,3 @@
-use crate::db::{CTask, Db};
 use chrono::{Local, Utc};
 use color::{color_space::Srgb, Deg, Hsv, Rgb, ToRgb};
 use crossterm::{
@@ -7,7 +6,10 @@ use crossterm::{
 	terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
 };
 use notify_rust::Notification;
-use pomeranian::pomodoro::Pomodoro;
+use pomeranian::{
+	db::{CTask, Db},
+	pomodoro::Pomodoro,
+};
 use ratatui::{
 	backend::CrosstermBackend,
 	layout::{Constraint, Direction, Layout, Rect},

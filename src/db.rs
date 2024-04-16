@@ -1,8 +1,10 @@
-use chrono::{DateTime, Days, Local, NaiveTime, Utc};
-use pomeranian::{
+//! Wraps the core scheduler and pomodoro timer up together and allows storing it on disk
+
+use crate::{
 	pomodoro::Pomodoro,
 	scheduler::{Schedule, Task},
 };
+use chrono::{DateTime, Days, Local, NaiveTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::{
 	collections::{BTreeMap, HashSet},
@@ -11,13 +13,20 @@ use std::{
 	time::{Duration, Instant},
 };
 
+/// The database struct, as stored on disk.
 #[derive(Serialize, Deserialize, Clone)]
-pub(crate) struct Db {
-	pub(crate) schedule: Schedule<CTask>,
+pub struct Db {
+	/// The schedule, which in this case operates on [CTask]s.
+	pub schedule: Schedule<CTask>,
+	/// The part of the day to schedule timeslots on.
 	pub active_period: Range<NaiveTime>,
+	/// The break interval for the pomodoro techniques.
 	pub break_interval: u32,
+	/// The length of a short break.
 	pub short_break: Duration,
+	/// The length of a long break.
 	pub long_break: Duration,
+	/// The list of pomodoro states that have already been created, which always correspond to a schedule slot.
 	pub pomodoro_states: Vec<(Range<DateTime<Utc>>, Pomodoro)>,
 }
 
@@ -49,6 +58,7 @@ impl Deref for Db {
 }
 
 impl Db {
+	/// Perform housekeeping tasks to clean up old slots and such
 	pub fn housekeeping(&mut self) {
 		self.create_slots_up_to(
 			self.schedule
@@ -63,6 +73,8 @@ impl Db {
 		self.pomodoro_states.retain(|(t, _)| t.end > Utc::now());
 		self.schedule.schedule();
 	}
+
+	/// Fill out slots and pomodoro states up to the specified time.
 	pub fn create_slots_up_to(&mut self, time: DateTime<Utc>) {
 		let mut cursor = self
 			.pomodoro_states
@@ -107,6 +119,7 @@ impl Db {
 		}
 	}
 
+	/// Insert a task and ensure we've done our best to schedule it.
 	pub fn insert_task(&mut self, task: impl Into<Arc<CTask>>) {
 		let task = task.into();
 		self.create_slots_up_to(task.working_period.end);
@@ -114,6 +127,7 @@ impl Db {
 		self.schedule.schedule();
 	}
 
+	/// Remove a task from the schedule.
 	pub fn remove_task(&mut self, task: &Arc<CTask>) {
 		self.schedule.tasks.retain(|t| t != task);
 		self.schedule
@@ -124,6 +138,7 @@ impl Db {
 		self.schedule.schedule();
 	}
 
+	/// Shuffle the schedule as many times as we can in the specified time limit, committing the permutation that got the highest score under the input Fn.
 	pub fn shuffle_maximizing(
 		&mut self,
 		goal: impl Fn(&Schedule<CTask>) -> f64,
@@ -148,12 +163,18 @@ impl Db {
 	}
 }
 
+/// Constant Task, an implementor of Task with constant fields.
 #[derive(Serialize, Deserialize, PartialEq, Eq, Hash, Clone, Debug)]
-pub(crate) struct CTask {
+pub struct CTask {
+	/// The priority of the task. Higher priorities are more important.
 	pub priority: u32,
+	/// The range of times when it is possible to work on this task.
 	pub working_period: Range<DateTime<Utc>>,
+	/// The length of time this task is expected to take.
 	pub estimated_length: Duration,
+	/// The amount of time that the user has worked on this task.
 	pub worked_length: Duration,
+	/// The human-friendly name of this task.
 	pub name: String,
 }
 

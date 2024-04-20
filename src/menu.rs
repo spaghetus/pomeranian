@@ -166,11 +166,11 @@ pub fn shuffle(db: &mut Db) {
 					.iter()
 					.filter(|(_, task_)| task_.as_ref() == Some(task))
 					.map(|(time, _)| *time - Utc::now())
-					.map(|t| t.to_std().unwrap().as_secs())
+					.map(|t| t.num_seconds())
 					.max()
 			})
 			.collect::<Vec<_>>();
-		(ttc.iter().copied().sum::<u64>() as f64) / (ttc.len() as f64)
+		(ttc.iter().copied().sum::<i64>() as f64) / (ttc.len() as f64)
 	}
 
 	fn early_riser(sched: &Schedule<CTask>) -> f64 {
@@ -179,10 +179,10 @@ pub fn shuffle(db: &mut Db) {
 			.iter()
 			.filter(|(_, slot)| slot.is_none())
 			.map(|(t, _)| *t - Utc::now())
-			.map(|d| d.to_std().unwrap().as_secs())
+			.map(|d| d.num_seconds())
 			.collect::<Vec<_>>();
 
-		(ttb.iter().copied().sum::<u64>() as f64) / (ttb.len() as f64)
+		(ttb.iter().copied().sum::<i64>() as f64) / (ttb.len() as f64)
 	}
 
 	fn explosive(sched: &Schedule<CTask>) -> f64 {

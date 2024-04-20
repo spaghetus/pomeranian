@@ -190,7 +190,7 @@ fn task_loop(
 				.expect("Instant increases monotonically, so this is always positive")
 				.as_secs_f64() / (time.end - entered_task_at)
 				.to_std()
-				.expect("Same reasoning here")
+				.expect("Entered_at is less than now, and this loop would have ended if now was greater than time.end")
 				.as_secs_f64();
 			let bar = Gauge::default()
 				.ratio(completion)

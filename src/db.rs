@@ -75,6 +75,7 @@ impl Db {
 	}
 
 	/// Fill out slots and pomodoro states up to the specified time.
+	#[allow(clippy::missing_panics_doc)] // Won't panic until the heat death of the universe
 	pub fn create_slots_up_to(&mut self, time: DateTime<Utc>) {
 		let mut cursor = self
 			.pomodoro_states

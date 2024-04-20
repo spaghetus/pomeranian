@@ -94,7 +94,7 @@ impl<T: Task> Schedule<T> {
 				let found = self
 					.slots
 					.values()
-					.filter(|v| v.as_ref().map(|v| v == t).unwrap_or(false))
+					.filter(|v| v.as_ref().is_some_and(|v| v == t))
 					.count() as u64;
 				(t, n.saturating_sub(found))
 			})
@@ -159,6 +159,7 @@ impl<T: Task> Schedule<T> {
 	}
 
 	/// Shuffle tasks randomly, while still keeping every task in a slot within its working period.
+	#[allow(clippy::missing_panics_doc)] // Should never actually panic
 	pub fn shuffle(&mut self) {
 		/// Helper to get the working period of an optional task
 		fn wp_of<T: Task>(t: Option<&Arc<T>>) -> Range<DateTime<Utc>> {
@@ -199,13 +200,18 @@ impl<T: Task> Schedule<T> {
 			// Pick a slot to switch
 			let index = rng.gen_range(0..candidates.len());
 			// Set up references
-			let [left, rest @ ..] = &mut candidates[..] else {
+			let [left, rest @ ..] = &mut *candidates else {
 				// This pattern will never fail, but the compiler doesn't know it yet
 				unreachable!()
 			};
 			// if the index is 0, we've picked ourselves and it doesn't make sense to swap
 			if index != 0 {
-				std::mem::swap(*left, rest[index - 1]);
+				std::mem::swap(
+					*left,
+					rest.get_mut(index.saturating_sub(1)).expect(
+						"Always in range because rest has a length one less than candidate",
+					),
+				);
 			}
 		}
 	}

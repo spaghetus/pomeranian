@@ -191,7 +191,9 @@ pub fn shuffle(db: &mut Db) {
 		for slot in sched.slots.values().map(Option::is_some) {
 			match (slot, in_combo) {
 				(false, true) => {
-					*lengths.last_mut().unwrap() += 1;
+					*lengths.last_mut().expect(
+						"We can only enter a combo after pushing to the list, so this can't fail.",
+					) += 1;
 				}
 				(false, false) => {
 					lengths.push(1);
@@ -210,7 +212,9 @@ pub fn shuffle(db: &mut Db) {
 		for task in sched.slots.values() {
 			match (task, current) {
 				(Some(task), Some(c)) if task == c => {
-					*combos.last_mut().unwrap() += 1;
+					*combos.last_mut().expect(
+						"We can only enter a combo after pushing to the list, so this can't fail.",
+					) += 1;
 				}
 				(Some(task), _) => {
 					current = Some(task);
@@ -248,7 +252,7 @@ pub fn shuffle(db: &mut Db) {
 		5 => &explosive,
 		6 => &|s| -hyperfocus(s),
 		7 => &hyperfocus,
-		_ => todo!(),
+		_ => unreachable!(),
 	};
 	eprintln!("Just a second...");
 	let (score, iterations) = db.shuffle_maximizing(goal, Duration::from_secs_f32(0.5));

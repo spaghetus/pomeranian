@@ -36,6 +36,44 @@ fn timer_inner(db: &mut Db) -> std::io::Result<()> {
 	let mut time_spent: HashMap<Arc<CTask>, Duration> = HashMap::new();
 	let mut finished_active_period = false;
 	db.pomodoro_states.sort_by_key(|(t, _)| t.start);
+	state_loop(
+		db,
+		&mut finished_active_period,
+		&mut terminal,
+		&mut time_spent,
+	)?;
+
+	disable_raw_mode()?;
+	execute!(
+		terminal.backend_mut(),
+		LeaveAlternateScreen,
+		DisableMouseCapture
+	)?;
+	terminal.show_cursor()?;
+
+	for (mut task, time) in time_spent {
+		db.remove_task(&task);
+		let task_mut = Arc::make_mut(&mut task);
+		task_mut.worked_length = task_mut
+			.worked_length
+			.add(time)
+			.min(task_mut.estimated_length);
+		db.insert_task(task);
+	}
+
+	if finished_active_period {
+		eprintln!("Done working today! See above for any schedule warnings.");
+	}
+
+	Ok(())
+}
+
+fn state_loop(
+	db: &mut Db,
+	finished_active_period: &mut bool,
+	terminal: &mut Terminal<CrosstermBackend<std::io::Stdout>>,
+	time_spent: &mut HashMap<Arc<CTask>, Duration>,
+) -> Result<(), std::io::Error> {
 	for (time, state) in &db.pomodoro_states {
 		let mut keep_going = true;
 		// Skip if there are somehow still slots that have ended
@@ -44,7 +82,7 @@ fn timer_inner(db: &mut Db) -> std::io::Result<()> {
 		}
 		if time.start > (Utc::now() + Duration::from_secs(5)) {
 			keep_going = false;
-			finished_active_period = true;
+			*finished_active_period = true;
 		}
 		// Set up task context
 		let entered_task_at = Utc::now();
@@ -75,48 +113,7 @@ fn timer_inner(db: &mut Db) -> std::io::Result<()> {
 			}
 		}
 		// Loop until we're done with this task
-		while keep_going && time.end > Utc::now() {
-			let now = Utc::now();
-			// Draw terminal
-			terminal.draw(|frame| {
-				let rows = Layout::new(
-					Direction::Vertical,
-					[Constraint::Length(4), Constraint::Min(1)],
-				)
-				.split(frame.size());
-				// Draw status message
-				let label = format!(
-					"{}s done; {}s until completion ({})\n(Q to stop)",
-					(now - entered_task_at).num_seconds(),
-					(time.end - now).num_seconds(),
-					time.end.with_timezone(&Local)
-				);
-				frame.render_widget(
-					Paragraph::new(label)
-						.block(Block::default().borders(Borders::ALL).title(title.as_str())),
-					rows[0],
-				);
-
-				// Draw progress bar
-				let completion = (now - entered_task_at).to_std().unwrap().as_secs_f64()
-					/ (time.end - entered_task_at).to_std().unwrap().as_secs_f64();
-				let bar = Gauge::default()
-					.ratio(completion)
-					.use_unicode(true)
-					.block(Block::default().borders(Borders::ALL));
-				frame.render_widget(bar, rows[1]);
-			})?;
-
-			if crossterm::event::poll(Duration::from_millis(100))? {
-				if let Event::Key(KeyEvent {
-					code: KeyCode::Char('q'),
-					..
-				}) = crossterm::event::read()?
-				{
-					keep_going = false;
-				}
-			}
-		}
+		task_loop(&mut keep_going, time, terminal, &title, entered_task_at)?;
 		// Done with the section
 		if let Some(task) = task {
 			if let Err(e) = Notification::new()
@@ -127,24 +124,27 @@ fn timer_inner(db: &mut Db) -> std::io::Result<()> {
 			}
 			// Add the time we spent on the task
 			let elapsed = Utc::now() - entered_task_at;
-			*time_spent.entry(task).or_default() += elapsed.to_std().unwrap();
+			*time_spent.entry(task).or_default() += elapsed
+				.to_std()
+				.expect("DateTime is monotonic, so this will always be positive");
 		}
 		for offset in 0..=20 {
-			let offset = offset as f64 / 40.0;
+			let offset = f64::from(offset) / 40.0;
 			terminal.draw(|frame| {
 				for x in 0..frame.size().width {
-					let hue = (((x as f64) / frame.size().width as f64) + offset) * 360.0;
+					let hue = ((f64::from(x) / f64::from(frame.size().width)) + offset) * 360.0;
 					let hsv = Hsv::<f64, Srgb>::new(Deg(hue), 1.0, 1.0);
 					let rgb: Rgb<f64> = hsv.to_rgb();
+					#[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
 					let color = Color::Rgb(
-						(rgb.r * u8::MAX as f64) as u8,
-						(rgb.g * u8::MAX as f64) as u8,
-						(rgb.b * u8::MAX as f64) as u8,
+						(rgb.r * f64::from(u8::MAX)) as u8,
+						(rgb.g * f64::from(u8::MAX)) as u8,
+						(rgb.b * f64::from(u8::MAX)) as u8,
 					);
 					frame.render_widget(
 						Block::default().bg(color),
 						Rect::new(x, 0, 1, frame.size().height),
-					)
+					);
 				}
 			})?;
 			std::thread::sleep(Duration::from_millis(30));
@@ -153,28 +153,61 @@ fn timer_inner(db: &mut Db) -> std::io::Result<()> {
 			break;
 		}
 	}
+	Ok(())
+}
 
-	disable_raw_mode()?;
-	execute!(
-		terminal.backend_mut(),
-		LeaveAlternateScreen,
-		DisableMouseCapture
-	)?;
-	terminal.show_cursor()?;
+fn task_loop(
+	keep_going: &mut bool,
+	time: &std::ops::Range<chrono::prelude::DateTime<Utc>>,
+	terminal: &mut Terminal<CrosstermBackend<std::io::Stdout>>,
+	title: &str,
+	entered_task_at: chrono::prelude::DateTime<Utc>,
+) -> Result<(), std::io::Error> {
+	while *keep_going && time.end > Utc::now() {
+		let now = Utc::now();
+		// Draw terminal
+		terminal.draw(|frame| {
+			let rows = Layout::new(
+				Direction::Vertical,
+				[Constraint::Length(4), Constraint::Min(1)],
+			)
+			.split(frame.size());
+			// Draw status message
+			let label = format!(
+				"{}s done; {}s until completion ({})\n(Q to stop)",
+				(now - entered_task_at).num_seconds(),
+				(time.end - now).num_seconds(),
+				time.end.with_timezone(&Local)
+			);
+			frame.render_widget(
+				Paragraph::new(label).block(Block::default().borders(Borders::ALL).title(title)),
+				rows[0],
+			);
 
-	for (mut task, time) in time_spent {
-		db.remove_task(&task);
-		let task_mut = Arc::make_mut(&mut task);
-		task_mut.worked_length = task_mut
-			.worked_length
-			.add(time)
-			.min(task_mut.estimated_length);
-		db.insert_task(task);
+			// Draw progress bar
+			let completion = (now - entered_task_at)
+				.to_std()
+				.expect("Instant increases monotonically, so this is always positive")
+				.as_secs_f64() / (time.end - entered_task_at)
+				.to_std()
+				.expect("Same reasoning here")
+				.as_secs_f64();
+			let bar = Gauge::default()
+				.ratio(completion)
+				.use_unicode(true)
+				.block(Block::default().borders(Borders::ALL));
+			frame.render_widget(bar, rows[1]);
+		})?;
+
+		if crossterm::event::poll(Duration::from_millis(100))? {
+			if let Event::Key(KeyEvent {
+				code: KeyCode::Char('q'),
+				..
+			}) = crossterm::event::read()?
+			{
+				*keep_going = false;
+			}
+		}
 	}
-
-	if finished_active_period {
-		eprintln!("Done working today! See above for any schedule warnings.");
-	}
-
 	Ok(())
 }

@@ -1,11 +1,13 @@
 #![allow(clippy::unwrap_used)]
 
-use chrono::{Local, Utc};
+use chrono::{offset::LocalResult, DateTime, Local, TimeZone, Utc};
+use ical::{parser::{ical::component::IcalEvent, ParserError}, property::Property};
 use pomeranian::{
 	db::{CTask, Db},
 	scheduler::Schedule,
 };
-use std::{ops::Div, time::Duration};
+use core::str;
+use std::{ops::Div, time::Duration, io::BufReader};
 
 mod pomodoro;
 
@@ -264,3 +266,71 @@ pub fn shuffle(db: &mut Db) {
 pub fn timer(db: &mut Db) {
 	pomodoro::timer(db);
 }
+pub fn blackboard(db: &mut Db){
+
+	let link: String = dialoguer::Input::new()
+			.with_prompt("Calander Link")
+			.interact_text()
+			.unwrap();
+	let buf = BufReader::new(reqwest::blocking::get(link).unwrap());
+
+    let reader = ical::IcalParser::new(buf);
+
+    for line in reader {
+        let events=line.unwrap().events;
+		for event in events{
+			let property = event.properties.get(3).unwrap();
+			let namef =&property.value.as_ref().unwrap().to_string();
+			let name = namef.to_string();
+			let property = event.properties.get(2).unwrap();
+			let startff =&property.value.as_ref().unwrap().to_string();
+			let startf = startff.to_string();
+			let property = event.properties.get(1).unwrap();
+			let endff =&property.value.as_ref().unwrap().to_string();
+			let endf = endff.to_string();
+			let end= date_conversion(endf);
+			let start= date_conversion(startf);
+			let estimated_length = Duration::from_secs_f64(1.0 * 60.0 * 60.0);
+			let worked_length = Duration::from_secs_f64(0.0);
+			let priority = 0;
+			let task = CTask {
+				name,
+				working_period: start..end,
+				estimated_length,
+				worked_length,
+				priority,
+			};
+			println!("{:?}", task);
+			let property = event.properties.get(4).unwrap();
+			let IDf =&property.value.as_ref().unwrap().to_string();
+			let id = IDf.to_string();
+			db.remove_task(&id);
+			db.insert_task(id, task);
+		}
+
+    }
+	
+}
+pub fn date_conversion(date: String) -> DateTime<Utc>{
+	let yearf = &date[0..4];
+	let monthf = &date[4..6];
+	let dayf = &date[6..8];
+	let hourf = &date[9..11];
+	let minf = &date[11..13];
+	let secf = &date[13..15];
+	let year: i32 = yearf.parse().expect("Not a valid number");
+	let month: u32 = monthf.parse().expect("Not a valid number");
+	let day: u32 = dayf.parse().expect("Not a valid number");
+	let hour: u32 = hourf.parse().expect("Not a valid number");
+	let min: u32 = minf.parse().expect("Not a valid number");
+	let sec: u32 = secf.parse().expect("Not a valid number");
+	let dateret = Utc.with_ymd_and_hms(year, month, day, hour, min, sec);
+	let date= dateret.unwrap();
+	return date;
+}
+//pub fn icalextract(event: IcalEvent, ind: i32) -> String{
+	//let property: &Property = event.properties.get(ind).unwrap();
+	//let objectf =&property.value.as_ref().unwrap().to_string();
+	//let object = objectf.to_string();
+//return  object;
+//}

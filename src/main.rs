@@ -39,6 +39,7 @@ fn main() {
 				"shuffle for strategy",
 				"start working",
 				"reschedule",
+				"blackboard",
 				"exit",
 			])
 			.interact()
@@ -57,7 +58,8 @@ fn main() {
 					db.create_slots_up_to(task.working_period.end);
 				}
 			}
-			7 => break,
+			7 => menu::blackboard(&mut db),
+			8 => break,
 			_ => unreachable!(),
 		}
 	}

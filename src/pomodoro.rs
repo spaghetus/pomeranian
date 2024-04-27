@@ -61,14 +61,14 @@ fn pomodoro_works_ok() {
 		Work(3),
 		Break(2),
 	];
-	assert_eq!(&history[..], &reference);
+	assert_eq!(&*history, &reference);
 	history.clear();
 	reference.reverse();
 	for _ in 0..9 {
 		timer = timer.untick(4);
 		history.push(timer);
 	}
-	assert_eq!(&history[..], &reference[1..]);
+	assert_eq!(&*history, &reference[1..]);
 }
 
 #[test]

@@ -4,7 +4,9 @@ use crate::{
 	pomodoro::Pomodoro,
 	scheduler::{Schedule, Task},
 };
-use chrono::{DateTime, Days, Local, NaiveTime, Utc};
+use chrono::{DateTime, Days, Local, NaiveDateTime, NaiveTime, TimeZone, Utc};
+use chrono_tz::Tz;
+use ical::{parser::ical::component::IcalEvent, property::Property};
 use serde::{Deserialize, Serialize};
 use std::{
 	collections::{BTreeMap, HashMap},
@@ -13,6 +15,7 @@ use std::{
 	sync::Arc,
 	time::{Duration, Instant},
 };
+use thiserror::Error;
 
 /// The database struct, as stored on disk.
 #[derive(Serialize, Deserialize, Clone)]
@@ -182,6 +185,8 @@ pub struct CTask {
 	pub worked_length: Duration,
 	/// The human-friendly name of this task.
 	pub name: String,
+	/// The remote ID of a task, if it has one
+	pub remote_id: Option<String>,
 }
 
 impl Task for CTask {
@@ -198,4 +203,74 @@ impl Task for CTask {
 	fn estimated_length(&self) -> std::time::Duration {
 		self.estimated_length - self.worked_length
 	}
+}
+
+#[derive(Error, Debug)]
+pub enum EventToTaskError {
+	#[error("Error parsing timezone")]
+	TzError(#[from] chrono_tz::ParseError),
+	#[error("Error parsing date string")]
+	ChronoError(#[from] chrono::ParseError),
+	#[error("Malformed event")]
+	MalformedEvent,
+}
+
+impl TryFrom<IcalEvent> for CTask {
+	type Error = EventToTaskError;
+
+	fn try_from(event: IcalEvent) -> Result<Self, Self::Error> {
+		let properties: HashMap<_, _> = event
+			.properties
+			.iter()
+			.map(|prop| (prop.name.as_str(), prop))
+			.collect();
+		let Some(name) = properties.get("SUMMARY").and_then(|e| e.value.clone()) else {
+			return Err(EventToTaskError::MalformedEvent);
+		};
+		let Some(end) = properties.get("DTSTART") else {
+			return Err(EventToTaskError::MalformedEvent);
+		};
+		let end = date_conversion(end)?;
+		let start = Utc::now().min(end);
+		let estimated_length = if end > Utc::now() {
+			Duration::from_secs_f64(1.0 * 60.0 * 60.0)
+		} else {
+			Duration::ZERO
+		};
+		let worked_length = Duration::from_secs_f64(0.0);
+		let priority = 0;
+		let id = properties
+			.get("UID")
+			.and_then(|e| e.value.clone())
+			.ok_or(EventToTaskError::MalformedEvent)?;
+		Ok(CTask {
+			name,
+			working_period: start..end,
+			estimated_length,
+			worked_length,
+			priority,
+			remote_id: Some(id),
+		})
+	}
+}
+
+pub fn date_conversion(event: &Property) -> Result<DateTime<Utc>, EventToTaskError> {
+	let params = event
+		.params
+		.as_ref()
+		.ok_or(EventToTaskError::MalformedEvent)?;
+	let tz = params
+		.iter()
+		.find(|(id, _)| id == "TZID")
+		.map(|(_, tz)| &tz[0])
+		.ok_or(EventToTaskError::MalformedEvent)?;
+	let tz: Tz = tz.parse()?;
+
+	let date = event
+		.value
+		.clone()
+		.ok_or(EventToTaskError::MalformedEvent)?;
+	let date = NaiveDateTime::parse_from_str(&date, "%Y%m%dT%H%M%S")?;
+	let date = tz.from_local_datetime(&date).unwrap();
+	Ok(date.with_timezone(&Utc))
 }

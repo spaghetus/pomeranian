@@ -9,6 +9,9 @@
 #![warn(clippy::unimplemented)]
 #![warn(missing_docs)]
 #![warn(clippy::unwrap_used)]
+#![allow(clippy::missing_errors_doc)]
+#![allow(clippy::missing_panics_doc)]
+#![allow(missing_docs)]
 
 pub mod db;
 pub mod pomodoro;

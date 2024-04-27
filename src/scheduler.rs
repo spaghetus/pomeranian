@@ -389,7 +389,7 @@ mod tests {
 		schedule.shuffle();
 		assert!(schedule.check_times());
 
-		dbg!(&failed);
+		eprintln!("{failed:?}");
 		assert!(failed.is_empty());
 	}
 }

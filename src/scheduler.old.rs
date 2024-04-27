@@ -7,21 +7,17 @@ use rand::prelude::*;
 use serde::{Deserialize, Serialize};
 use std::{
 	collections::{BTreeMap, HashMap, HashSet},
-	fmt::Debug,
+	hash::Hash,
 	ops::Range,
-	string::String,
-	sync::{
-		atomic::{AtomicI64, Ordering},
-		Arc,
-	},
+	sync::Arc,
 	time::Duration,
 };
 
 // (Traits are like interfaces in object-orientation-land, they allow polymorphism by composition instead of polymorphism by inheritance)
 /// A task which the scheduler is able to organize
-pub trait Task {
+pub trait Task: Hash + Eq {
 	/// Priority needs to have total ordering, but otherwise we don't really care what it is.
-	type Priority: Ord + Copy;
+	type Priority: Ord;
 
 	/// The priority of the task. Higher is more important.
 	fn priority(&self) -> Self::Priority;
@@ -43,14 +39,14 @@ pub trait Task {
 #[derive(Debug, PartialEq, Eq, Serialize, Deserialize, Default, Clone)]
 pub struct Schedule<T: Task> {
 	/// The set of tasks, which even includes tasks that haven't reserved any slots.
-	pub tasks: HashMap<String, Arc<T>>,
+	pub tasks: HashSet<Arc<T>>,
 	/// Timeslots in which tasks can be scheduled.
-	pub slots: BTreeMap<DateTime<Utc>, Option<String>>,
+	pub slots: BTreeMap<DateTime<Utc>, Option<Arc<T>>>,
 	/// The length of each timeslice.
 	pub timeslice_length: Duration,
 }
 
-impl<T: Task + Debug> Schedule<T> {
+impl<T: Task> Schedule<T> {
 	/// Simple method for laying out slots over a period of time. Probably don't use this.
 	pub fn layout_slots(&mut self, range: &Range<DateTime<Utc>>, interval: Duration) {
 		let mut cursor = range.start;
@@ -62,20 +58,20 @@ impl<T: Task + Debug> Schedule<T> {
 
 	/// Tasks which don't have enough tasks scheduled to be finished before their due date.
 	#[must_use]
-	pub fn unsatisfied_tasks(&self) -> HashSet<&str> {
+	pub fn unsatisfied_tasks(&self) -> HashSet<Arc<T>> {
 		self.tasks
-			.keys()
-			.map(|id| {
+			.iter()
+			.map(|t| {
 				(
-					id.as_str(),
+					t,
 					self.slots
 						.values()
-						.filter(|v| v.as_deref() == Some(id))
+						.filter(|v| v.as_deref() == Some(t))
 						.count() as u64,
 				)
 			})
-			.filter(|&(t, amt)| amt < self.tasks[t].divided_into(self.timeslice_length))
-			.map(|(t, _amt)| t)
+			.filter(|&(t, amt)| amt < t.divided_into(self.timeslice_length))
+			.map(|(t, _amt)| t.clone())
 			.collect()
 	}
 
@@ -87,140 +83,116 @@ impl<T: Task + Debug> Schedule<T> {
 
 	/// Try to satisfy every task.
 	#[allow(clippy::missing_panics_doc)]
-	pub fn schedule(&mut self) -> HashSet<String> {
-		let mut tasks: HashMap<_, _> = self
+	pub fn schedule(&mut self) -> HashSet<Arc<T>> {
+		let mut unsatisfied = HashSet::new();
+
+		let mut remaining: HashMap<&Arc<T>, u64> = self
 			.tasks
 			.iter()
-			.map(|(id, task)| {
-				(
-					id.clone(),
-					task.clone(),
-					task.divided_into(self.timeslice_length),
-					self.slots
-						.values()
-						.filter(|v| v.as_ref().map(String::as_str) == Some(id))
-						.count(),
-				)
-			})
-			.map(|(id, task, wants, has)| {
-				(
-					id,
-					(
-						task,
-						AtomicI64::new(
-							i64::try_from(wants)
-								.expect("Task is too long")
-								.saturating_sub_unsigned(has as u64),
-						),
-					),
-				)
+			.map(|t| (t, t.divided_into(self.timeslice_length)))
+			.map(|(t, n)| {
+				let found = self
+					.slots
+					.values()
+					.filter(|v| v.as_ref().is_some_and(|v| v == t))
+					.count() as u64;
+				(t, n.saturating_sub(found))
 			})
 			.collect();
 
-		// Free up slots for tasks with more than they need
-		for slot in &mut self.slots.values_mut().filter(|v| v.is_some()) {
-			let Some(id) = slot.clone() else {
-				unreachable!()
-			};
-			let Some((_task, wants_change)) = tasks.get_mut(&id) else {
-				*slot = None;
-				continue;
-			};
-			if wants_change.load(Ordering::Relaxed) >= 0 {
-				continue;
-			}
-			*slot = None;
-			wants_change.fetch_add(1, Ordering::Relaxed);
-		}
-
-		// Each task takes what it needs, in ascending order of working period length
-		for (id, (task, wants_change)) in tasks.iter_mut().sorted_by_key(|(_, (task, _))| {
-			let wp = task.working_period();
+		// Lay out task in ascending period-length order, to prevent larger tasks from starving shorter ones
+		'task: for task in self.tasks.iter().sorted_by_key(|t| {
+			let wp = t.working_period();
 			wp.end - wp.start
 		}) {
-			let mut working_period = self.slots.range_mut(task.working_period());
-			'take: while wants_change.load(Ordering::Relaxed) > 0 {
-				let slot = match working_period.next() {
-					Some((_, slot @ None)) => slot,
-					Some((_, Some(_))) => continue 'take,
-					None => break 'take,
-				};
-				*slot = Some(id.clone());
-				wants_change.fetch_sub(1, Ordering::Relaxed);
+			let remaining = remaining.get_mut(task).unwrap();
+			for (_, slot) in self
+				.slots
+				.range_mut(task.working_period())
+				.filter(|(_, slot)| slot.is_none())
+			{
+				if *remaining == 0 {
+					continue 'task;
+				}
+				*remaining -= 1;
+				*slot = Some(task.clone());
+			}
+			if *remaining > 0 {
+				unsatisfied.insert(task.clone());
 			}
 		}
 
 		// The Timeslice Hunger Games
-		loop {
-			let mut done = true;
-
-			'task: for (id, (task, wants_change)) in tasks
-				.iter()
-				.filter(|(_, (_, w))| w.load(Ordering::Relaxed) > 0)
+		// Every task gets a chance to step on tasks with a lower priority until the bodies stop hitting the floor
+		// This algorithm is truly awful and I sincerely hope no future employer ever sees it
+		let mut continuing = true;
+		while continuing {
+			continuing = false;
+			'task: for task in unsatisfied
+				.clone()
+				.into_iter()
+				.sorted_by_key(|t| t.priority())
 			{
 				let candidates: Vec<_> = self
 					.slots
 					.range(task.working_period())
-					.filter_map(|(s, t)| {
-						t.as_ref()
-							.map(|t| (*s, t.to_string(), self.tasks[t.as_str()].priority()))
-					})
-					.filter(|(_, _, p)| *p < task.priority())
-					.sorted_by_key(|(_, _t, p)| *p)
-					.map(|(slot, task, _)| (slot, task))
+					.filter_map(|(s, t)| t.clone().map(|t| (*s, t)))
+					.filter(|(_, t)| t.priority() < task.priority())
+					.sorted_by_key(|(_, t)| t.priority())
 					.collect();
 				for (slot, candidate_task) in candidates {
-					let (_, candidate_wants_change) = &tasks[&candidate_task];
-					done = false;
-					candidate_wants_change.fetch_add(1, Ordering::Relaxed);
-					let wants = wants_change.fetch_sub(1, Ordering::Relaxed) - 1;
-					if wants == 0 {
+					continuing = true;
+					*remaining.get_mut(&candidate_task).unwrap() += 1;
+					unsatisfied.insert(candidate_task.clone());
+					let rem = remaining.get_mut(&task).unwrap();
+					*rem -= 1;
+					if *rem == 0 {
+						unsatisfied.remove(&*task);
 						continue 'task;
 					}
-					self.slots.insert(slot, Some(id.clone()));
+					self.slots.insert(slot, Some(task.clone()));
 				}
-			}
-
-			if done {
-				break;
 			}
 		}
 
-		tasks
-			.into_iter()
-			.filter(|(_, (_, wants))| wants.load(Ordering::Relaxed) != 0)
-			.map(|(id, _)| id)
-			.collect()
+		unsatisfied
 	}
 
 	/// Shuffle tasks randomly, while still keeping every task in a slot within its working period.
 	#[allow(clippy::missing_panics_doc)] // Should never actually panic
 	pub fn shuffle(&mut self) {
-		let mut rng = thread_rng();
-		let total_range = DateTime::<Utc>::MIN_UTC..DateTime::<Utc>::MAX_UTC;
+		/// Helper to get the working period of an optional task
+		fn wp_of<T: Task>(t: Option<&Arc<T>>) -> Range<DateTime<Utc>> {
+			t.as_ref()
+				.map_or(DateTime::<Utc>::MIN_UTC..DateTime::<Utc>::MAX_UTC, |t| {
+					t.working_period()
+				})
+		}
 
+		let mut rng = thread_rng();
+
+		// From 0 to the number of slots...
 		for index in 0..self.slots.len() {
 			let mut slots = self.slots.iter_mut();
+			// Get a reference to the slot we're looking at right now
 			let Some((l_time, left)) = slots.nth(index) else {
-				unreachable!()
+				unreachable!();
 			};
-			let range = left
-				.as_ref()
-				.map(|l| self.tasks[l.as_str()].working_period())
-				.unwrap_or(total_range.clone());
-			let mut candidates = [left]
+			// Copy its working period for borrow checker reasons
+			let l_wp = wp_of(left.as_ref());
+			// Find all of the candidates for swapping, including ourselves
+			let mut candidates: Vec<&mut Option<Arc<T>>> = [left]
 				.into_iter()
 				.chain(
+					// Keep taking references to slots until we hit the end of our work period
+					// BTreeMap iteration is always ordered from least key to highest key so this is fine
 					slots
-						.take_while(|(time, _)| range.contains(time))
-						.filter(|(_, t)| {
-							t.as_ref().map_or(true, |t| {
-								self.tasks[t.as_str()].working_period().contains(l_time)
-							})
-						})
-						.map(|(_, right)| right),
+						.take_while(|(time, _)| l_wp.contains(time))
+						// Only take references to slots that are also willing to be here
+						.filter(|(_, task)| task.is_none() || wp_of(task.as_ref()).contains(l_time))
+						.map(|(_, t)| t),
 				)
-				.collect_vec();
+				.collect();
 			if candidates.len() < 2 {
 				// If there's only one candidate, it's ourselves and it wouldn't make sense to swap
 				continue;
@@ -248,7 +220,7 @@ impl<T: Task + Debug> Schedule<T> {
 	pub(crate) fn check_times(&self) -> bool {
 		for (time, task) in &self.slots {
 			if let Some(task) = task {
-				if !self.tasks[task].working_period().contains(time) {
+				if !task.working_period().contains(time) {
 					return false;
 				}
 			}
@@ -261,7 +233,6 @@ impl<T: Task + Debug> Schedule<T> {
 mod tests {
 	use super::{Schedule, Task};
 	use chrono::{DateTime, TimeZone, Utc};
-	use itertools::Itertools;
 	use serde::{Deserialize, Serialize};
 	use std::{collections::BTreeMap, ops::Range, time::Duration};
 
@@ -295,15 +266,12 @@ mod tests {
 		let hour = Duration::from_secs(60 * 60);
 		let tasks = (1..9)
 			.map(|i| {
-				(
-					i.to_string(),
-					ExplicitTask {
-						priority: i64::from(i),
-						work_period: (start + (hour * i))..(start + (hour * i * 3)),
-						length: Duration::from_secs(30 * 60),
-					}
-					.into(),
-				)
+				ExplicitTask {
+					priority: i64::from(i),
+					work_period: (start + (hour * i))..(start + (hour * i * 3)),
+					length: Duration::from_secs(30 * 60),
+				}
+				.into()
 			})
 			.collect();
 		let mut schedule = Schedule {
@@ -326,15 +294,12 @@ mod tests {
 		let end = Utc.with_ymd_and_hms(2024, 3, 31, 0, 0, 0).unwrap();
 		let tasks: Vec<_> = (0..49)
 			.map(|i| {
-				(
-					i.to_string(),
-					ExplicitTask {
-						priority: i,
-						work_period: start..end,
-						length: Duration::from_secs(25 * 60),
-					}
-					.into(),
-				)
+				ExplicitTask {
+					priority: i,
+					work_period: start..end,
+					length: Duration::from_secs(25 * 60),
+				}
+				.into()
 			})
 			.collect();
 		let mut schedule = Schedule {
@@ -348,7 +313,7 @@ mod tests {
 		schedule.shuffle();
 		assert!(schedule.check_times());
 
-		assert_eq!(failed.into_iter().collect_vec(), &["0".to_string()]);
+		assert_eq!(failed.into_iter().next().unwrap(), tasks[0]);
 	}
 
 	#[test]
@@ -358,24 +323,18 @@ mod tests {
 		let hour = Duration::from_secs(60 * 60);
 
 		let tasks = [
-			(
-				0.to_string(),
-				ExplicitTask {
-					priority: 1,
-					work_period: (start + (hour * 4))..(start + (hour * 6)),
-					length: Duration::from_secs(60 * 60),
-				}
-				.into(),
-			),
-			(
-				1.to_string(),
-				ExplicitTask {
-					priority: 9,
-					work_period: (start + (hour * 2))..(start + (hour * 23)),
-					length: Duration::from_secs(13 * 60 * 60),
-				}
-				.into(),
-			),
+			ExplicitTask {
+				priority: 1,
+				work_period: (start + (hour * 4))..(start + (hour * 6)),
+				length: Duration::from_secs(60 * 60),
+			}
+			.into(),
+			ExplicitTask {
+				priority: 9,
+				work_period: (start + (hour * 2))..(start + (hour * 23)),
+				length: Duration::from_secs(13 * 60 * 60),
+			}
+			.into(),
 		];
 
 		let mut schedule = Schedule {

@@ -1,3 +1,5 @@
+#![allow(clippy::unwrap_used)]
+
 use chrono::{Local, Utc};
 use pomeranian::{
 	db::{CTask, Db},
@@ -12,7 +14,7 @@ pub fn view(db: &Db) {
 	db.slots.iter().for_each(|(time, task)| {
 		let time = time.with_timezone(&Local).to_rfc2822();
 		let task = match task {
-			Some(ref task) => &task.name,
+			Some(ref id) => &db.tasks[id].name,
 			None => "Free",
 		};
 		println!("{time}\t{task}");
@@ -20,16 +22,13 @@ pub fn view(db: &Db) {
 	eprintln!("End plan listing.");
 	let unsatisfied = db.unsatisfied_tasks();
 	if !unsatisfied.is_empty() {
-		eprintln!(
-			"Unsatisfied:\n{:?}",
-			unsatisfied.iter().map(|t| &t.name).collect::<Vec<_>>()
-		);
+		eprintln!("Unsatisfied:\n{unsatisfied:?}");
 	}
 }
 
 pub fn add(db: &mut Db) {
 	loop {
-		let name = dialoguer::Input::new()
+		let name: String = dialoguer::Input::new()
 			.with_prompt("Task name")
 			.interact()
 			.unwrap();
@@ -52,7 +51,7 @@ pub fn add(db: &mut Db) {
 			.unwrap();
 
 		let task = CTask {
-			name,
+			name: name.clone(),
 			working_period: start..end,
 			estimated_length,
 			worked_length: Duration::ZERO,
@@ -64,42 +63,42 @@ pub fn add(db: &mut Db) {
 			.interact()
 			.unwrap()
 		{
-			db.insert_task(task);
+			db.insert_task(name, task);
 			break;
 		}
 	}
 }
 
 pub fn remove(db: &mut Db) {
-	let tasks: Vec<_> = db.tasks.iter().cloned().collect();
+	let tasks: Vec<_> = db.tasks.clone().into_iter().collect();
 	if tasks.is_empty() {
 		eprintln!("No tasks");
 		return;
 	}
 	if let Some(index) = dialoguer::FuzzySelect::new()
-		.items(&tasks.iter().map(|t| &t.name).collect::<Vec<_>>())
+		.items(&tasks.iter().map(|(_id, t)| &t.name).collect::<Vec<_>>())
 		.with_prompt("Task to remove? (or esc)")
 		.interact_opt()
 		.unwrap()
 	{
-		db.remove_task(&tasks[index]);
+		db.remove_task(&tasks[index].0);
 	}
 }
 
 pub fn edit(db: &mut Db) {
-	let tasks: Vec<_> = db.tasks.iter().cloned().collect();
+	let tasks: Vec<_> = db.tasks.clone().into_iter().collect();
 	if tasks.is_empty() {
 		eprintln!("No tasks");
 		return;
 	}
 	if let Some(index) = dialoguer::FuzzySelect::new()
-		.items(&tasks.iter().map(|t| &t.name).collect::<Vec<_>>())
+		.items(&tasks.iter().map(|(_id, t)| &t.name).collect::<Vec<_>>())
 		.with_prompt("Task to edit? (or esc)")
 		.interact_opt()
 		.unwrap()
 	{
-		let task = &tasks[index];
-		db.remove_task(task);
+		let (id, task) = &tasks[index];
+		db.remove_task(id);
 		loop {
 			let name = dialoguer::Input::new()
 				.with_prompt("Task name")
@@ -147,7 +146,7 @@ pub fn edit(db: &mut Db) {
 				.interact()
 				.unwrap()
 			{
-				db.insert_task(task);
+				db.insert_task(id.to_string(), task);
 				break;
 			}
 		}
@@ -160,11 +159,11 @@ pub fn shuffle(db: &mut Db) {
 		let ttc = sched
 			.tasks
 			.iter()
-			.filter_map(|task| {
+			.filter_map(|(id, _task)| {
 				sched
 					.slots
 					.iter()
-					.filter(|(_, task_)| task_.as_ref() == Some(task))
+					.filter(|(_, task_)| task_.as_ref() == Some(id))
 					.map(|(time, _)| *time - Utc::now())
 					.map(|t| t.num_seconds())
 					.max()

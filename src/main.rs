@@ -53,7 +53,7 @@ fn main() {
 			6 => {
 				db.schedule.slots.clear();
 				db.pomodoro_states.clear();
-				for task in db.schedule.tasks.clone() {
+				for (_id, task) in db.schedule.tasks.clone() {
 					db.create_slots_up_to(task.working_period.end);
 				}
 			}

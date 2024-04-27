@@ -6,10 +6,7 @@ use crossterm::{
 	terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
 };
 use notify_rust::Notification;
-use pomeranian::{
-	db::{CTask, Db},
-	pomodoro::Pomodoro,
-};
+use pomeranian::{db::Db, pomodoro::Pomodoro};
 use ratatui::{
 	backend::CrosstermBackend,
 	layout::{Constraint, Direction, Layout, Rect},
@@ -33,7 +30,7 @@ fn timer_inner(db: &mut Db) -> std::io::Result<()> {
 	execute!(stdout, EnterAlternateScreen, EnableMouseCapture)?;
 	let mut terminal = Terminal::new(CrosstermBackend::new(stdout))?;
 
-	let mut time_spent: HashMap<Arc<CTask>, Duration> = HashMap::new();
+	let mut time_spent: HashMap<String, Duration> = HashMap::new();
 	let mut finished_active_period = false;
 	db.pomodoro_states.sort_by_key(|(t, _)| t.start);
 	state_loop(
@@ -51,14 +48,16 @@ fn timer_inner(db: &mut Db) -> std::io::Result<()> {
 	)?;
 	terminal.show_cursor()?;
 
-	for (mut task, time) in time_spent {
-		db.remove_task(&task);
+	for (id, time) in time_spent {
+		let Some(mut task) = db.remove_task(&id) else {
+			continue;
+		};
 		let task_mut = Arc::make_mut(&mut task);
 		task_mut.worked_length = task_mut
 			.worked_length
 			.add(time)
 			.min(task_mut.estimated_length);
-		db.insert_task(task);
+		db.insert_task(id, task);
 	}
 
 	if finished_active_period {
@@ -72,7 +71,7 @@ fn state_loop(
 	db: &mut Db,
 	finished_active_period: &mut bool,
 	terminal: &mut Terminal<CrosstermBackend<std::io::Stdout>>,
-	time_spent: &mut HashMap<Arc<CTask>, Duration>,
+	time_spent: &mut HashMap<String, Duration>,
 ) -> Result<(), std::io::Error> {
 	for (time, state) in &db.pomodoro_states {
 		let mut keep_going = true;
@@ -91,7 +90,7 @@ fn state_loop(
 			(Pomodoro::Work(n), Some(task)) => {
 				format!(
 					"Working on {} in work period ({} more until long break)",
-					task.name,
+					db.tasks[task].name,
 					db.break_interval - n
 				)
 			}
@@ -106,7 +105,7 @@ fn state_loop(
 		};
 		if let Some(task) = &task {
 			if let Err(e) = Notification::new()
-				.summary(&format!("Start working on {}", task.name))
+				.summary(&format!("Start working on {}", db.tasks[task].name))
 				.show()
 			{
 				eprintln!("Error showing notification {e}");
@@ -117,7 +116,7 @@ fn state_loop(
 		// Done with the section
 		if let Some(task) = task {
 			if let Err(e) = Notification::new()
-				.summary(&format!("Done working on {}", task.name))
+				.summary(&format!("Done working on {}", db.tasks[&task].name))
 				.show()
 			{
 				eprintln!("Error showing notification {e}");

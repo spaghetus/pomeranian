@@ -7,8 +7,9 @@ use crate::{
 use chrono::{DateTime, Days, Local, NaiveTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::{
-	collections::{BTreeMap, HashSet},
+	collections::{BTreeMap, HashMap},
 	ops::{Deref, Range},
+	string::String,
 	sync::Arc,
 	time::{Duration, Instant},
 };
@@ -31,10 +32,11 @@ pub struct Db {
 }
 
 impl Default for Db {
+	#[allow(clippy::unwrap_used)]
 	fn default() -> Self {
 		Self {
 			schedule: Schedule {
-				tasks: HashSet::default(),
+				tasks: HashMap::default(),
 				slots: BTreeMap::default(),
 				timeslice_length: Duration::from_secs(25 * 60),
 			},
@@ -63,7 +65,7 @@ impl Db {
 		self.create_slots_up_to(
 			self.schedule
 				.tasks
-				.iter()
+				.values()
 				.map(|t| t.working_period.end)
 				.max()
 				.unwrap_or(Utc::now()),
@@ -88,7 +90,7 @@ impl Db {
 			.last()
 			.map(|(_, s)| *s)
 			.unwrap_or_default();
-		while cursor < time {
+		while cursor <= time {
 			pomodoro = pomodoro.tick(self.break_interval);
 			let len = match pomodoro {
 				Pomodoro::Work(_) => self.schedule.timeslice_length,
@@ -111,9 +113,11 @@ impl Db {
 			};
 			let local_cursor = cursor.with_timezone(&Local);
 			if local_cursor > local_cursor.with_time(self.active_period.end).unwrap() {
-				let local_cursor = (local_cursor.checked_add_days(Days::new(1)).unwrap())
-					.with_time(self.active_period.start)
-					.unwrap();
+				let local_cursor = (local_cursor
+					.checked_add_days(Days::new(1))
+					.expect("Time within range"))
+				.with_time(self.active_period.start)
+				.unwrap();
 				cursor = local_cursor.with_timezone(&Utc);
 				pomodoro = Pomodoro::LongBreak;
 			}
@@ -121,22 +125,23 @@ impl Db {
 	}
 
 	/// Insert a task and ensure we've done our best to schedule it.
-	pub fn insert_task(&mut self, task: impl Into<Arc<CTask>>) {
+	pub fn insert_task(&mut self, id: String, task: impl Into<Arc<CTask>>) {
 		let task = task.into();
 		self.create_slots_up_to(task.working_period.end);
-		self.schedule.tasks.insert(task);
+		self.schedule.tasks.insert(id, task);
 		self.schedule.schedule();
 	}
 
 	/// Remove a task from the schedule.
-	pub fn remove_task(&mut self, task: &Arc<CTask>) {
-		self.schedule.tasks.retain(|t| t != task);
+	pub fn remove_task(&mut self, id: &str) -> Option<Arc<CTask>> {
 		self.schedule
 			.slots
 			.values_mut()
-			.filter(|v| v.as_ref() == Some(task))
+			.filter(|v| v.as_ref().map(String::as_str) == Some(id))
 			.for_each(|v| *v = None);
+		let task = self.schedule.tasks.remove(id);
 		self.schedule.schedule();
+		task
 	}
 
 	/// Shuffle the schedule as many times as we can in the specified time limit, committing the permutation that got the highest score under the input Fn.

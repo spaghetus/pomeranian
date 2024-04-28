@@ -1,6 +1,6 @@
 #![allow(clippy::unwrap_used)]
 
-use chrono::{Local, Utc};
+use chrono::{DateTime, Local, Utc};
 use itertools::Itertools;
 use pomeranian::{
 	db::{CTask, Db},
@@ -43,6 +43,13 @@ pub fn add(db: &mut Db) {
 			.unwrap();
 		let end = dialoguer::Input::new()
 			.with_prompt("End date (YYYY-MM-DD HH:MM:SS+TZ:TZ)")
+			.validate_with(|t: &DateTime<Utc>| {
+				if *t >= start {
+					Ok(())
+				} else {
+					Err("Must end after start")
+				}
+			})
 			.interact()
 			.unwrap();
 		let estimated_length: f64 = dialoguer::Input::new()
@@ -119,6 +126,13 @@ pub fn edit(db: &mut Db) {
 			let end = dialoguer::Input::new()
 				.with_prompt("End date (YYYY-MM-DD HH:MM:SS+TZ:TZ)")
 				.default(task.working_period.end)
+				.validate_with(|t: &DateTime<Utc>| {
+					if *t >= start {
+						Ok(())
+					} else {
+						Err("Must end after start")
+					}
+				})
 				.interact()
 				.unwrap();
 			let estimated_length: f64 = dialoguer::Input::new()
